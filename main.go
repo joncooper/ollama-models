@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -29,6 +30,7 @@ var (
 	searchCardRE      = regexp.MustCompile(`(?s)<li x-test-model\b.*?</li>`)
 	searchTitleRE     = regexp.MustCompile(`(?s)<span x-test-search-response-title>(.*?)</span>`)
 	searchDescRE      = regexp.MustCompile(`(?s)<p class="max-w-lg[^"]*">(.*?)</p>`)
+	searchHrefRE      = regexp.MustCompile(`(?s)<a href="([^"]+)" class="group w-full">`)
 	pullCountRE       = regexp.MustCompile(`(?s)<span x-test-pull-count>(.*?)</span>`)
 	tagCountRE        = regexp.MustCompile(`(?s)<span x-test-tag-count>(.*?)</span>`)
 	updatedRE         = regexp.MustCompile(`(?s)<span x-test-updated>(.*?)</span>`)
@@ -36,10 +38,15 @@ var (
 	nextSearchPageRE  = regexp.MustCompile(`hx-get="/search\?page=(\d+)[^"]*"`)
 	modelNameRE       = regexp.MustCompile(`(?s)<a x-test-model-name[^>]*>(.*?)</a>`)
 	summaryRE         = regexp.MustCompile(`(?s)<span id="summary-content">\s*(.*?)\s*</span>`)
-	tagHrefRE         = regexp.MustCompile(`href="/library/([^"/?#]+:[^"/?#]+)"`)
 	detailLabelLinkRE = regexp.MustCompile(`(?s)<a href="/library/[^"]+/blobs/[^"]+">\s*(.*?)\s*</a>`)
 	detailValueRE     = regexp.MustCompile(`(?s)<div class="truncate font-mono[^"]*">\s*(.*?)\s*</div>\s*<div class="hidden text-right[^"]*">\s*(.*?)\s*</div>`)
 	readmeRE          = regexp.MustCompile(`(?s)<div\s+id="display"[^>]*>\s*(.*?)\s*</div>\s*</div>\s*<div id="editorContainer"`)
+	tagRowSplitRE     = regexp.MustCompile(`<div class="group px-4 py-3">`)
+	tagNameRE         = regexp.MustCompile(`href="/([^"?#]+:[^"?#]+)"`)
+	tagSizeContextRE  = regexp.MustCompile(`(?s)<p class="col-span-2 text-neutral-500 text-\[13px\]">([^<]+)</p>`)
+	tagInputRE        = regexp.MustCompile(`(?s)<div class="col-span-2 text-neutral-500 text-\[13px\]\s*">\s*(.*?)\s*</div>`)
+	tagDigestUpdatedRE = regexp.MustCompile(`(?s)<span class="font-mono text-\[11px\]">([^<]+)</span>&nbsp;·&nbsp;([^<]+)`)
+	tagLatestBadgeRE  = regexp.MustCompile(`(?s)rounded-full[^>]*>\s*latest\s*</span>`)
 	scriptRE          = regexp.MustCompile(`(?is)<script\b.*?</script>`)
 	styleRE           = regexp.MustCompile(`(?is)<style\b.*?</style>`)
 	liOpenRE          = regexp.MustCompile(`(?is)<li\b[^>]*>`)
@@ -48,6 +55,7 @@ var (
 
 type searchResult struct {
 	Model     string
+	Path      string
 	Summary   string
 	Downloads string
 	Tags      string
@@ -67,14 +75,40 @@ type metadataRow struct {
 	Size  string
 }
 
+type tagInfo struct {
+	Tag     string
+	Latest  bool
+	Size    string
+	Context string
+	Input   string
+	Digest  string
+	Updated string
+	Notes   string
+}
+
 type modelInfo struct {
 	Reference     string
 	Family        string
+	PagePath      string
 	Summary       string
 	Downloads     string
 	Updated       string
 	Metadata      []metadataRow
 	ReadmeSnippet string
+}
+
+type httpStatusError struct {
+	URL        string
+	StatusCode int
+	Status     string
+	Title      string
+}
+
+func (e *httpStatusError) Error() string {
+	if e.Title != "" {
+		return fmt.Sprintf("%s returned %s (%s)", e.URL, e.Status, e.Title)
+	}
+	return fmt.Sprintf("%s returned %s", e.URL, e.Status)
 }
 
 func main() {
@@ -110,7 +144,7 @@ The CLI only queries official Ollama library pages:
 }
 
 func newSearchCmd() *cobra.Command {
-	var sortBy string
+	sortBy := searchSortDownloads
 
 	cmd := &cobra.Command{
 		Use:   "search <query>",
@@ -130,7 +164,7 @@ func newSearchCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&sortBy, "sort", "", "Sort results by one of: model, tags, downloads, updated")
+	cmd.Flags().StringVar(&sortBy, "sort", searchSortDownloads, "Sort results by one of: model, tags, downloads, updated")
 	return cmd
 }
 
@@ -152,20 +186,17 @@ func newTagsCmd() *cobra.Command {
 
 func newInfoCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "info <model:tag>",
-		Short: "Show summary, downloads, updated time, metadata, and README snippet",
-		Long:  "Show summary, downloads, updated time, metadata, and a README snippet for a model tag.",
+		Use:   "info <model|model:tag>",
+		Short: "Show model or tag details, plus available tags",
+		Long:  "Show summary, downloads, updated time, metadata, a README snippet, and available tags for a model or specific tag.",
 		Args: cobra.ExactArgs(1),
 		Example: strings.TrimSpace(`
+  ollama-models info qwen3.5
   ollama-models info qwen3.5:latest
   ollama-models info llama3:8b-text-q3_K_L
 `),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ref := strings.TrimSpace(args[0])
-			if !strings.Contains(ref, ":") {
-				return fmt.Errorf("info requires a model:tag reference")
-			}
-			return runInfo(ref)
+			return runInfo(strings.TrimSpace(args[0]))
 		},
 	}
 }
@@ -205,10 +236,33 @@ func runTags(model string) error {
 	if len(tags) == 0 {
 		return fmt.Errorf("no tags found for %q", model)
 	}
+
+	fmt.Println("Per-tag download counts are not exposed on Ollama's tags page.")
+	return printTagsTable(os.Stdout, tags)
+}
+
+func printTagsTable(w io.Writer, tags []tagInfo) error {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "TAG\tLATEST\tSIZE\tCONTEXT\tINPUT\tUPDATED\tDIGEST\tNOTES")
 	for _, tag := range tags {
-		fmt.Println(tag)
+		latest := ""
+		if tag.Latest {
+			latest = "yes"
+		}
+		fmt.Fprintf(
+			tw,
+			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			tag.Tag,
+			latest,
+			tag.Size,
+			tag.Context,
+			tag.Input,
+			tag.Updated,
+			tag.Digest,
+			tag.Notes,
+		)
 	}
-	return nil
+	return tw.Flush()
 }
 
 func runInfo(reference string) error {
@@ -217,16 +271,45 @@ func runInfo(reference string) error {
 		return err
 	}
 
+	isTagReference := strings.Contains(reference, ":")
+	tagModel := reference
+	if strings.Contains(reference, ":") && info.Family != "" {
+		tagModel = info.Family
+	}
+	tags, err := fetchTags(tagModel)
+	if err != nil {
+		return err
+	}
+
 	fmt.Printf("Model: %s\n", info.Reference)
 	if info.Family != "" {
 		fmt.Printf("Family: %s\n", info.Family)
 	}
-	fmt.Printf("Summary: %s\n", info.Summary)
-	fmt.Printf("Downloads: %s\n", info.Downloads)
-	fmt.Printf("Updated: %s\n", info.Updated)
+	if info.PagePath != "" {
+		fmt.Printf("Page: %s%s\n", baseURL, info.PagePath)
+	}
+	if isTagReference {
+		fmt.Printf("Family downloads: %s\n", info.Downloads)
+		fmt.Printf("Tag updated: %s\n", info.Updated)
+	} else {
+		fmt.Printf("Downloads: %s\n", info.Downloads)
+		fmt.Printf("Updated: %s\n", info.Updated)
+	}
+
+	if info.Summary != "" {
+		if isTagReference {
+			fmt.Printf("\nFamily summary:\n%s\n", info.Summary)
+		} else {
+			fmt.Printf("\nSummary:\n%s\n", info.Summary)
+		}
+	}
 
 	if len(info.Metadata) > 0 {
-		fmt.Printf("\nMetadata:\n")
+		if isTagReference {
+			fmt.Printf("\nTag details:\n")
+		} else {
+			fmt.Printf("\nMetadata:\n")
+		}
 		for _, row := range info.Metadata {
 			if row.Size != "" {
 				fmt.Printf("- %s [%s]: %s\n", row.Name, row.Size, row.Value)
@@ -237,7 +320,19 @@ func runInfo(reference string) error {
 	}
 
 	if info.ReadmeSnippet != "" {
-		fmt.Printf("\nREADME snippet:\n%s\n", info.ReadmeSnippet)
+		if isTagReference {
+			fmt.Printf("\nFamily README snippet:\n%s\n", info.ReadmeSnippet)
+		} else {
+			fmt.Printf("\nREADME snippet:\n%s\n", info.ReadmeSnippet)
+		}
+	}
+
+	if len(tags) > 0 {
+		fmt.Printf("\nAvailable tags:\n")
+		fmt.Println("Per-tag download counts are not exposed on Ollama's tags page.")
+		if err := printTagsTable(os.Stdout, tags); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -284,6 +379,7 @@ func parseSearchResults(body string) []searchResult {
 	for _, card := range cards {
 		result := searchResult{
 			Model:     firstText(searchTitleRE, card),
+			Path:      cleanText(firstRaw(searchHrefRE, card)),
 			Summary:   firstText(searchDescRE, card),
 			Downloads: firstText(pullCountRE, card),
 			Tags:      firstText(tagCountRE, card),
@@ -315,43 +411,36 @@ func findNextSearchPage(body string, currentPage int) int {
 	return next
 }
 
-func fetchTags(model string) ([]string, error) {
-	body, err := fetch("/library/" + model + "/tags")
+func fetchTags(model string) ([]tagInfo, error) {
+	body, err := fetch(tagsPathForReference(model))
 	if err != nil {
-		return nil, err
-	}
-
-	prefix := model + ":"
-	seen := make(map[string]bool)
-	tags := make([]string, 0)
-
-	for _, match := range tagHrefRE.FindAllStringSubmatch(body, -1) {
-		full := html.UnescapeString(match[1])
-		tag, ok := strings.CutPrefix(full, prefix)
-		if !ok || tag == "" || seen[tag] {
-			continue
+		var statusErr *httpStatusError
+		if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusNotFound {
+			return nil, err
 		}
-		seen[tag] = true
-		tags = append(tags, tag)
+
+		body, err = fetch(pagePathForReference(model))
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	return tags, nil
+	return parseTags(body, baseModelReference(model)), nil
 }
 
 func fetchInfo(reference string) (modelInfo, error) {
-	body, err := fetch("/library/" + reference)
+	pagePath := pagePathForReference(reference)
+	body, err := fetch(pagePath)
 	if err != nil {
 		return modelInfo{}, err
 	}
 
-	family := firstText(modelNameRE, body)
-	if family == "" {
-		family, _, _ = strings.Cut(reference, ":")
-	}
+	family := baseModelReference(reference)
 
 	info := modelInfo{
 		Reference: reference,
 		Family:    family,
+		PagePath:  pagePath,
 		Summary:   firstText(summaryRE, body),
 		Downloads: firstText(pullCountRE, body),
 		Updated:   firstText(updatedRE, body),
@@ -362,8 +451,55 @@ func fetchInfo(reference string) (modelInfo, error) {
 		info.Summary = firstText(titleRE, body)
 	}
 
-	info.ReadmeSnippet = snippet(cleanText(firstRaw(readmeRE, body)), 700)
+	info.ReadmeSnippet = normalizeReadmeSnippet(snippet(cleanText(firstRaw(readmeRE, body)), 700))
 	return info, nil
+}
+
+func parseTags(body, model string) []tagInfo {
+	prefix := model + ":"
+	seen := make(map[string]bool)
+	tags := make([]tagInfo, 0)
+
+	parts := tagRowSplitRE.Split(body, -1)
+	for _, part := range parts[1:] {
+		full := strings.TrimPrefix(html.UnescapeString(firstRaw(tagNameRE, part)), "/")
+		tag, ok := strings.CutPrefix(full, prefix)
+		if !ok || tag == "" || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+
+		sizeContext := tagSizeContextRE.FindAllStringSubmatch(part, -1)
+		size := ""
+		context := ""
+		if len(sizeContext) > 0 {
+			size = cleanText(sizeContext[0][1])
+		}
+		if len(sizeContext) > 1 {
+			context = cleanText(sizeContext[1][1])
+		}
+
+		input := firstText(tagInputRE, part)
+		digest := ""
+		updated := ""
+		if match := tagDigestUpdatedRE.FindStringSubmatch(part); len(match) == 3 {
+			digest = cleanText(match[1])
+			updated = cleanText(match[2])
+		}
+
+		tags = append(tags, tagInfo{
+			Tag:     tag,
+			Latest:  tagLatestBadgeRE.MatchString(part) || tag == "latest",
+			Size:    size,
+			Context: context,
+			Input:   input,
+			Digest:  digest,
+			Updated: updated,
+			Notes:   describeTag(tag),
+		})
+	}
+
+	return tags
 }
 
 func parseMetadata(body string) []metadataRow {
@@ -424,10 +560,12 @@ func fetch(path string) (string, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		title := firstText(titleRE, body)
-		if title != "" {
-			return "", fmt.Errorf("%s returned %s (%s)", target, resp.Status, title)
+		return "", &httpStatusError{
+			URL:        target,
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Title:      title,
 		}
-		return "", fmt.Errorf("%s returned %s", target, resp.Status)
 	}
 
 	return body, nil
@@ -531,6 +669,14 @@ func snippet(text string, max int) string {
 	return strings.TrimSpace(text[:cut]) + "..."
 }
 
+func normalizeReadmeSnippet(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if strings.EqualFold(trimmed, "No readme") {
+		return ""
+	}
+	return trimmed
+}
+
 func matchesQuery(model, query string) bool {
 	modelNorm := normalizeSearchText(model)
 	queryNorm := normalizeSearchText(query)
@@ -549,6 +695,104 @@ func normalizeSearchText(s string) string {
 		}
 	}
 	return b.String()
+}
+
+func pagePathForReference(reference string) string {
+	ref := strings.TrimSpace(strings.TrimPrefix(reference, "/"))
+	if ref == "" {
+		return "/library/"
+	}
+	if strings.HasPrefix(ref, "library/") {
+		return "/" + ref
+	}
+	if strings.Contains(ref, "/") {
+		return "/" + ref
+	}
+	return "/library/" + ref
+}
+
+func tagsPathForReference(reference string) string {
+	return pagePathForReference(baseModelReference(reference)) + "/tags"
+}
+
+func baseModelReference(reference string) string {
+	ref := strings.TrimSpace(strings.TrimPrefix(reference, "/"))
+	model, _, found := strings.Cut(ref, ":")
+	if found {
+		return model
+	}
+	return ref
+}
+
+func describeTag(tag string) string {
+	if tag == "latest" {
+		return "Alias for the current default tag"
+	}
+
+	parts := strings.Split(tag, "-")
+	notes := make([]string, 0, 4)
+	for _, part := range parts {
+		lower := strings.ToLower(part)
+		switch {
+		case lower == "instruct":
+			notes = append(notes, "instruction-tuned")
+		case lower == "text":
+			notes = append(notes, "text/base variant")
+		case lower == "vision":
+			notes = append(notes, "vision-capable")
+		case lower == "thinking":
+			notes = append(notes, "thinking/reasoning mode")
+		case lower == "tools":
+			notes = append(notes, "tool-calling")
+		case lower == "latest":
+			notes = append(notes, "default alias")
+		case isSizeToken(lower):
+			notes = append(notes, "size "+part)
+		case isQuantToken(part):
+			notes = append(notes, "quant "+part)
+		case lower == "fp16" || lower == "f16" || lower == "bf16":
+			notes = append(notes, "precision "+part)
+		}
+	}
+
+	if len(notes) == 0 {
+		return "-"
+	}
+	return strings.Join(dedupeStrings(notes), ", ")
+}
+
+func isSizeToken(s string) bool {
+	if len(s) < 2 {
+		return false
+	}
+	last := s[len(s)-1]
+	if last != 'b' && last != 'm' {
+		return false
+	}
+	for _, r := range s[:len(s)-1] {
+		if !unicode.IsDigit(r) && r != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+func isQuantToken(s string) bool {
+	lower := strings.ToLower(s)
+	return strings.HasPrefix(lower, "q") || strings.HasPrefix(lower, "iq")
+}
+
+func dedupeStrings(items []string) []string {
+	seen := make(map[string]bool, len(items))
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if seen[item] {
+			continue
+		}
+		seen[item] = true
+		out = append(out, item)
+	}
+	return out
 }
 
 func isValidSearchSort(sortBy string) bool {
