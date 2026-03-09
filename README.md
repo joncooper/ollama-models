@@ -59,3 +59,30 @@ Run the test suite with:
 ```bash
 go test ./...
 ```
+
+## Install
+
+Build the binary locally:
+
+```bash
+go build
+```
+
+Install it into your Go bin directory:
+
+```bash
+go install .
+```
+
+If `$GOBIN` is unset, the binary is typically installed to `$HOME/go/bin`.
+
+## Release
+
+For a simple local release artifact:
+
+```bash
+go build -o dist/ollama-models
+tar -czf dist/ollama-models_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m).tar.gz -C dist ollama-models
+```
+
+For multi-platform releases, build one archive per target with `GOOS` and `GOARCH`.

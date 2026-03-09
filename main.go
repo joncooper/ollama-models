@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -31,6 +32,7 @@ var (
 	pullCountRE       = regexp.MustCompile(`(?s)<span x-test-pull-count>(.*?)</span>`)
 	tagCountRE        = regexp.MustCompile(`(?s)<span x-test-tag-count>(.*?)</span>`)
 	updatedRE         = regexp.MustCompile(`(?s)<span x-test-updated>(.*?)</span>`)
+	updatedAgeValueRE = regexp.MustCompile(`^(\d+)\s+(hour|day|week|month|year)s?\s+ago$`)
 	nextSearchPageRE  = regexp.MustCompile(`hx-get="/search\?page=(\d+)[^"]*"`)
 	modelNameRE       = regexp.MustCompile(`(?s)<a x-test-model-name[^>]*>(.*?)</a>`)
 	summaryRE         = regexp.MustCompile(`(?s)<span id="summary-content">\s*(.*?)\s*</span>`)
@@ -51,6 +53,13 @@ type searchResult struct {
 	Tags      string
 	Updated   string
 }
+
+const (
+	searchSortModel     = "model"
+	searchSortTags      = "tags"
+	searchSortDownloads = "downloads"
+	searchSortUpdated   = "updated"
+)
 
 type metadataRow struct {
 	Name  string
@@ -101,7 +110,9 @@ The CLI only queries official Ollama library pages:
 }
 
 func newSearchCmd() *cobra.Command {
-	return &cobra.Command{
+	var sortBy string
+
+	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "List model families from official Ollama search results",
 		Long:  "List model families whose names match the query from official Ollama search results.",
@@ -109,11 +120,18 @@ func newSearchCmd() *cobra.Command {
 		Example: strings.TrimSpace(`
   ollama-models search qwen3.5
   ollama-models search llama 3
+  ollama-models search qwen3.5 --sort downloads
 `),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSearch(strings.TrimSpace(strings.Join(args, " ")))
+			if !isValidSearchSort(sortBy) {
+				return fmt.Errorf("invalid sort %q (expected one of: %s, %s, %s, %s)", sortBy, searchSortModel, searchSortTags, searchSortDownloads, searchSortUpdated)
+			}
+			return runSearch(strings.TrimSpace(strings.Join(args, " ")), sortBy)
 		},
 	}
+
+	cmd.Flags().StringVar(&sortBy, "sort", "", "Sort results by one of: model, tags, downloads, updated")
+	return cmd
 }
 
 func newTagsCmd() *cobra.Command {
@@ -152,7 +170,7 @@ func newInfoCmd() *cobra.Command {
 	}
 }
 
-func runSearch(query string) error {
+func runSearch(query, sortBy string) error {
 	results, err := searchModels(query)
 	if err != nil {
 		return err
@@ -160,6 +178,8 @@ func runSearch(query string) error {
 	if len(results) == 0 {
 		return fmt.Errorf("no matches found for %q", query)
 	}
+
+	sortSearchResults(results, sortBy)
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "MODEL\tTAGS\tDOWNLOADS\tUPDATED\tSUMMARY")
@@ -529,4 +549,140 @@ func normalizeSearchText(s string) string {
 		}
 	}
 	return b.String()
+}
+
+func isValidSearchSort(sortBy string) bool {
+	switch sortBy {
+	case "", searchSortModel, searchSortTags, searchSortDownloads, searchSortUpdated:
+		return true
+	default:
+		return false
+	}
+}
+
+func sortSearchResults(results []searchResult, sortBy string) {
+	if sortBy == "" {
+		return
+	}
+
+	now := time.Now()
+	sort.SliceStable(results, func(i, j int) bool {
+		left := results[i]
+		right := results[j]
+
+		switch sortBy {
+		case searchSortModel:
+			return compareStringsAsc(left.Model, right.Model)
+		case searchSortTags:
+			lt := parsePlainInt(left.Tags)
+			rt := parsePlainInt(right.Tags)
+			if lt == rt {
+				return compareStringsAsc(left.Model, right.Model)
+			}
+			return lt < rt
+		case searchSortDownloads:
+			ld := parseMetricCount(left.Downloads)
+			rd := parseMetricCount(right.Downloads)
+			if ld == rd {
+				return compareStringsAsc(left.Model, right.Model)
+			}
+			return ld > rd
+		case searchSortUpdated:
+			lu := parseUpdatedUnix(left.Updated, now)
+			ru := parseUpdatedUnix(right.Updated, now)
+			if lu == ru {
+				return compareStringsAsc(left.Model, right.Model)
+			}
+			return lu > ru
+		default:
+			return false
+		}
+	})
+}
+
+func compareStringsAsc(left, right string) bool {
+	ll := strings.ToLower(left)
+	rl := strings.ToLower(right)
+	if ll == rl {
+		return left < right
+	}
+	return ll < rl
+}
+
+func parsePlainInt(s string) int64 {
+	s = strings.TrimSpace(strings.ReplaceAll(s, ",", ""))
+	if s == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+func parseMetricCount(s string) float64 {
+	s = strings.TrimSpace(strings.ReplaceAll(strings.ToUpper(s), ",", ""))
+	if s == "" {
+		return 0
+	}
+
+	multiplier := 1.0
+	switch {
+	case strings.HasSuffix(s, "K"):
+		multiplier = 1_000
+		s = strings.TrimSuffix(s, "K")
+	case strings.HasSuffix(s, "M"):
+		multiplier = 1_000_000
+		s = strings.TrimSuffix(s, "M")
+	case strings.HasSuffix(s, "B"):
+		multiplier = 1_000_000_000
+		s = strings.TrimSuffix(s, "B")
+	}
+
+	value, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return value * multiplier
+}
+
+func parseUpdatedUnix(s string, now time.Time) int64 {
+	s = strings.ToLower(strings.TrimSpace(s))
+	switch s {
+	case "", "unknown":
+		return 0
+	case "just now", "today":
+		return now.Unix()
+	case "yesterday":
+		return now.Add(-24 * time.Hour).Unix()
+	}
+
+	match := updatedAgeValueRE.FindStringSubmatch(s)
+	if len(match) != 3 {
+		return 0
+	}
+
+	amount, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0
+	}
+
+	var age time.Duration
+	switch match[2] {
+	case "hour":
+		age = time.Duration(amount) * time.Hour
+	case "day":
+		age = time.Duration(amount) * 24 * time.Hour
+	case "week":
+		age = time.Duration(amount) * 7 * 24 * time.Hour
+	case "month":
+		age = time.Duration(amount) * 30 * 24 * time.Hour
+	case "year":
+		age = time.Duration(amount) * 365 * 24 * time.Hour
+	default:
+		return 0
+	}
+
+	return now.Add(-age).Unix()
 }
