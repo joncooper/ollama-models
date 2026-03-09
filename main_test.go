@@ -272,6 +272,62 @@ func TestFetchTagsFallsBackToModelPage(t *testing.T) {
 	}
 }
 
+func TestParseTagsFromLibraryPage(t *testing.T) {
+	body := `
+<div class="group px-4 py-3">
+  <a href="/library/qwen3.5:latest" class="md:hidden flex flex-col space-y-[6px] group">
+    <span class="group-hover:underline">qwen3.5:latest</span>
+  </a>
+  <div class="hidden group px-4 py-3 sm:grid sm:grid-cols-12 text-[13px]">
+    <a href="/library/qwen3.5:latest" class="group-hover:underline">qwen3.5:latest</a>
+    <input class="command hidden" value="qwen3.5:latest" />
+    <span class="ml-2 inline-flex items-center rounded-full px-2 py-px text-xs font-medium border border-blue-500 text-blue-600">latest</span>
+    <p class="col-span-2 text-neutral-500 text-[13px]">6.6GB</p>
+    <p class="col-span-2 text-neutral-500 text-[13px]">256K</p>
+    <div class="col-span-2 text-neutral-500 text-[13px] ">Text, Image</div>
+    <div class="flex text-neutral-500 text-xs items-center">
+      <span class="font-mono text-[11px]">6488c96fa5fa</span>&nbsp;·&nbsp;6 days ago
+    </div>
+  </div>
+</div>`
+
+	tags := parseTags(body, "qwen3.5")
+	if len(tags) != 1 {
+		t.Fatalf("expected 1 tag, got %d", len(tags))
+	}
+	if tags[0].Tag != "latest" {
+		t.Fatalf("expected latest tag, got %q", tags[0].Tag)
+	}
+	if tags[0].Size != "6.6GB" || tags[0].Context != "256K" || tags[0].Input != "Text, Image" {
+		t.Fatalf("unexpected tag fields: %#v", tags[0])
+	}
+}
+
+func TestParseTagsFromNamespacedModelPage(t *testing.T) {
+	body := `
+<div class="hidden group px-4 py-3 sm:grid sm:grid-cols-12 text-[13px]">
+  <a href="/bazobehram/qwen3.5-flash-27b:latest" class="block group-hover:underline text-sm font-medium text-neutral-800">qwen3.5-flash-27b:latest</a>
+  <input class="command hidden" value="bazobehram/qwen3.5-flash-27b:latest" />
+  <p class="col-span-2 text-neutral-500 text-[13px]">17GB</p>
+  <p class="col-span-2 text-neutral-500 text-[13px]">256K</p>
+  <div class="col-span-2 text-neutral-500 text-[13px] ">Text</div>
+  <div class="flex text-neutral-500 text-xs items-center">
+    <span class="font-mono text-[11px]">6cc996efdb6d</span>&nbsp;·&nbsp;1 week ago
+  </div>
+</div>`
+
+	tags := parseTags(body, "bazobehram/qwen3.5-flash-27b")
+	if len(tags) != 1 {
+		t.Fatalf("expected 1 tag, got %d", len(tags))
+	}
+	if tags[0].Tag != "latest" {
+		t.Fatalf("expected latest tag, got %q", tags[0].Tag)
+	}
+	if tags[0].Digest != "6cc996efdb6d" || tags[0].Updated != "1 week ago" {
+		t.Fatalf("unexpected tag metadata: %#v", tags[0])
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

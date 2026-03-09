@@ -26,31 +26,33 @@ var httpClient = &http.Client{
 }
 
 var (
-	titleRE           = regexp.MustCompile(`(?s)<title>(.*?)</title>`)
-	searchCardRE      = regexp.MustCompile(`(?s)<li x-test-model\b.*?</li>`)
-	searchTitleRE     = regexp.MustCompile(`(?s)<span x-test-search-response-title>(.*?)</span>`)
-	searchDescRE      = regexp.MustCompile(`(?s)<p class="max-w-lg[^"]*">(.*?)</p>`)
-	searchHrefRE      = regexp.MustCompile(`(?s)<a href="([^"]+)" class="group w-full">`)
-	pullCountRE       = regexp.MustCompile(`(?s)<span x-test-pull-count>(.*?)</span>`)
-	tagCountRE        = regexp.MustCompile(`(?s)<span x-test-tag-count>(.*?)</span>`)
-	updatedRE         = regexp.MustCompile(`(?s)<span x-test-updated>(.*?)</span>`)
-	updatedAgeValueRE = regexp.MustCompile(`^(\d+)\s+(hour|day|week|month|year)s?\s+ago$`)
-	nextSearchPageRE  = regexp.MustCompile(`hx-get="/search\?page=(\d+)[^"]*"`)
-	modelNameRE       = regexp.MustCompile(`(?s)<a x-test-model-name[^>]*>(.*?)</a>`)
-	summaryRE         = regexp.MustCompile(`(?s)<span id="summary-content">\s*(.*?)\s*</span>`)
-	detailLabelLinkRE = regexp.MustCompile(`(?s)<a href="/library/[^"]+/blobs/[^"]+">\s*(.*?)\s*</a>`)
-	detailValueRE     = regexp.MustCompile(`(?s)<div class="truncate font-mono[^"]*">\s*(.*?)\s*</div>\s*<div class="hidden text-right[^"]*">\s*(.*?)\s*</div>`)
-	readmeRE          = regexp.MustCompile(`(?s)<div\s+id="display"[^>]*>\s*(.*?)\s*</div>\s*</div>\s*<div id="editorContainer"`)
-	tagRowSplitRE     = regexp.MustCompile(`<div class="group px-4 py-3">`)
-	tagNameRE         = regexp.MustCompile(`href="/([^"?#]+:[^"?#]+)"`)
-	tagSizeContextRE  = regexp.MustCompile(`(?s)<p class="col-span-2 text-neutral-500 text-\[13px\]">([^<]+)</p>`)
-	tagInputRE        = regexp.MustCompile(`(?s)<div class="col-span-2 text-neutral-500 text-\[13px\]\s*">\s*(.*?)\s*</div>`)
-	tagDigestUpdatedRE = regexp.MustCompile(`(?s)<span class="font-mono text-\[11px\]">([^<]+)</span>&nbsp;·&nbsp;([^<]+)`)
-	tagLatestBadgeRE  = regexp.MustCompile(`(?s)rounded-full[^>]*>\s*latest\s*</span>`)
-	scriptRE          = regexp.MustCompile(`(?is)<script\b.*?</script>`)
-	styleRE           = regexp.MustCompile(`(?is)<style\b.*?</style>`)
-	liOpenRE          = regexp.MustCompile(`(?is)<li\b[^>]*>`)
-	tagRE             = regexp.MustCompile(`(?s)<[^>]+>`)
+	titleRE                = regexp.MustCompile(`(?s)<title>(.*?)</title>`)
+	searchCardRE           = regexp.MustCompile(`(?s)<li x-test-model\b.*?</li>`)
+	searchTitleRE          = regexp.MustCompile(`(?s)<span x-test-search-response-title>(.*?)</span>`)
+	searchDescRE           = regexp.MustCompile(`(?s)<p class="max-w-lg[^"]*">(.*?)</p>`)
+	searchHrefRE           = regexp.MustCompile(`(?s)<a href="([^"]+)" class="group w-full">`)
+	pullCountRE            = regexp.MustCompile(`(?s)<span x-test-pull-count>(.*?)</span>`)
+	tagCountRE             = regexp.MustCompile(`(?s)<span x-test-tag-count>(.*?)</span>`)
+	updatedRE              = regexp.MustCompile(`(?s)<span x-test-updated>(.*?)</span>`)
+	updatedAgeValueRE      = regexp.MustCompile(`^(\d+)\s+(hour|day|week|month|year)s?\s+ago$`)
+	nextSearchPageRE       = regexp.MustCompile(`hx-get="/search\?page=(\d+)[^"]*"`)
+	modelNameRE            = regexp.MustCompile(`(?s)<a x-test-model-name[^>]*>(.*?)</a>`)
+	summaryRE              = regexp.MustCompile(`(?s)<span id="summary-content">\s*(.*?)\s*</span>`)
+	detailLabelLinkRE      = regexp.MustCompile(`(?s)<a href="/library/[^"]+/blobs/[^"]+">\s*(.*?)\s*</a>`)
+	detailValueRE          = regexp.MustCompile(`(?s)<div class="truncate font-mono[^"]*">\s*(.*?)\s*</div>\s*<div class="hidden text-right[^"]*">\s*(.*?)\s*</div>`)
+	readmeRE               = regexp.MustCompile(`(?s)<div\s+id="display"[^>]*>\s*(.*?)\s*</div>\s*</div>\s*<div id="editorContainer"`)
+	tagTagsPageRowSplitRE  = regexp.MustCompile(`<div class="group px-4 py-3">`)
+	tagModelPageRowSplitRE = regexp.MustCompile(`(?s)<div class="hidden group px-4 py-3[^"]*">`)
+	tagCommandValueRE      = regexp.MustCompile(`(?s)<input class="command hidden" value="([^"]+:[^"]+)"`)
+	tagHrefRE              = regexp.MustCompile(`href="/([^"?#]+:[^"?#]+)"`)
+	tagSizeContextRE       = regexp.MustCompile(`(?s)<p class="col-span-2 text-neutral-500 text-\[13px\]">([^<]+)</p>`)
+	tagInputRE             = regexp.MustCompile(`(?s)<div class="col-span-2 text-neutral-500 text-\[13px\]\s*">\s*(.*?)\s*</div>`)
+	tagDigestUpdatedRE     = regexp.MustCompile(`(?s)<span class="font-mono text-\[11px\]">([^<]+)</span>&nbsp;·&nbsp;([^<]+)`)
+	tagLatestBadgeRE       = regexp.MustCompile(`(?s)rounded-full[^>]*>\s*latest\s*</span>`)
+	scriptRE               = regexp.MustCompile(`(?is)<script\b.*?</script>`)
+	styleRE                = regexp.MustCompile(`(?is)<style\b.*?</style>`)
+	liOpenRE               = regexp.MustCompile(`(?is)<li\b[^>]*>`)
+	tagRE                  = regexp.MustCompile(`(?s)<[^>]+>`)
 )
 
 type searchResult struct {
@@ -189,7 +191,7 @@ func newInfoCmd() *cobra.Command {
 		Use:   "info <model|model:tag>",
 		Short: "Show model or tag details, plus available tags",
 		Long:  "Show summary, downloads, updated time, metadata, a README snippet, and available tags for a model or specific tag.",
-		Args: cobra.ExactArgs(1),
+		Args:  cobra.ExactArgs(1),
 		Example: strings.TrimSpace(`
   ollama-models info qwen3.5
   ollama-models info qwen3.5:latest
@@ -460,9 +462,17 @@ func parseTags(body, model string) []tagInfo {
 	seen := make(map[string]bool)
 	tags := make([]tagInfo, 0)
 
-	parts := tagRowSplitRE.Split(body, -1)
+	parseTagParts(tagTagsPageRowSplitRE.Split(body, -1), prefix, seen, &tags)
+	if len(tags) == 0 {
+		parseTagParts(tagModelPageRowSplitRE.Split(body, -1), prefix, seen, &tags)
+	}
+
+	return tags
+}
+
+func parseTagParts(parts []string, prefix string, seen map[string]bool, tags *[]tagInfo) {
 	for _, part := range parts[1:] {
-		full := strings.TrimPrefix(html.UnescapeString(firstRaw(tagNameRE, part)), "/")
+		full := parseTagReference(part)
 		tag, ok := strings.CutPrefix(full, prefix)
 		if !ok || tag == "" || seen[tag] {
 			continue
@@ -487,7 +497,7 @@ func parseTags(body, model string) []tagInfo {
 			updated = cleanText(match[2])
 		}
 
-		tags = append(tags, tagInfo{
+		*tags = append(*tags, tagInfo{
 			Tag:     tag,
 			Latest:  tagLatestBadgeRE.MatchString(part) || tag == "latest",
 			Size:    size,
@@ -498,8 +508,17 @@ func parseTags(body, model string) []tagInfo {
 			Notes:   describeTag(tag),
 		})
 	}
+}
 
-	return tags
+func parseTagReference(part string) string {
+	if value := strings.TrimSpace(html.UnescapeString(firstRaw(tagCommandValueRE, part))); value != "" {
+		return strings.TrimPrefix(value, "/")
+	}
+
+	raw := strings.TrimSpace(html.UnescapeString(firstRaw(tagHrefRE, part)))
+	raw = strings.TrimPrefix(raw, "/")
+	raw = strings.TrimPrefix(raw, "library/")
+	return raw
 }
 
 func parseMetadata(body string) []metadataRow {
