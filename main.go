@@ -441,14 +441,14 @@ func fetchInfo(reference string) (modelInfo, error) {
 		Reference: reference,
 		Family:    family,
 		PagePath:  pagePath,
-		Summary:   firstText(summaryRE, body),
+		Summary:   normalizeSummary(firstText(summaryRE, body), reference, family),
 		Downloads: firstText(pullCountRE, body),
 		Updated:   firstText(updatedRE, body),
 		Metadata:  parseMetadata(body),
 	}
 
 	if info.Summary == "" {
-		info.Summary = firstText(titleRE, body)
+		info.Summary = normalizeSummary(firstText(titleRE, body), reference, family)
 	}
 
 	info.ReadmeSnippet = normalizeReadmeSnippet(snippet(cleanText(firstRaw(readmeRE, body)), 700))
@@ -674,6 +674,24 @@ func normalizeReadmeSnippet(text string) string {
 	if strings.EqualFold(trimmed, "No readme") {
 		return ""
 	}
+	return trimmed
+}
+
+func normalizeSummary(summary, reference, family string) string {
+	trimmed := strings.TrimSpace(summary)
+	if trimmed == "" {
+		return ""
+	}
+
+	summaryNorm := normalizeSearchText(trimmed)
+	if summaryNorm == "" {
+		return ""
+	}
+
+	if summaryNorm == normalizeSearchText(reference) || summaryNorm == normalizeSearchText(family) {
+		return ""
+	}
+
 	return trimmed
 }
 

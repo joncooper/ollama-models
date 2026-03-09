@@ -16,24 +16,44 @@ Lists model families from official Ollama search results.
 
 The CLI applies an additional local name filter so broad server-side matches do not pull in unrelated families. For example, `search qwen3.5` keeps `qwen3.5` and `user/qwen3.5-*` results, but excludes `qwen2.5`.
 
+By default, search results are sorted by descending download count. You can override that with `--sort model`, `--sort tags`, `--sort downloads`, or `--sort updated`.
+
 ```bash
 go run . search qwen3.5
+go run . search qwen3.5 --sort updated
 ```
 
 ### `tags <model>`
 
-Lists available tags for a model from `/library/<model>/tags`.
+Lists available tags for a model from `/library/<model>/tags`, along with the metadata Ollama exposes for each tag:
+
+- whether the tag is the current `latest` alias
+- size
+- context window
+- input type
+- updated time
+- digest
+- a short interpretation of what the tag name means when it includes things like size, `instruct`, `text`, `vision`, or quantization markers such as `q4_K_M`
+
+Ollama's tags page does not expose per-tag download counts, so this CLI cannot show them.
 
 ```bash
 go run . tags qwen3.5
+go run . tags stewartpark/qwen3.5
 ```
 
-### `info <model:tag>`
+### `info <model>` or `info <model:tag>`
 
-Prints summary, downloads, updated time, metadata, and a README snippet for a specific model tag.
+Prints summary, downloads, updated time, metadata, and a README snippet, then lists the available tags for that model.
+
+If you pass just a model name, the CLI uses the model family page as the primary/common view and then shows the available tags.
+
+If you pass a specific tag, the CLI shows tag-specific details first and then shows the available tags for the parent model.
 
 ```bash
+go run . info qwen3.5
 go run . info qwen3.5:latest
+go run . info stewartpark/qwen3.5
 ```
 
 ## Help

@@ -187,6 +187,46 @@ func TestNormalizeReadmeSnippet(t *testing.T) {
 	}
 }
 
+func TestNormalizeSummary(t *testing.T) {
+	tests := []struct {
+		name      string
+		summary   string
+		reference string
+		family    string
+		want      string
+	}{
+		{
+			name:      "real summary kept",
+			summary:   "Qwen 3.5 model with always-on thinking",
+			reference: "stewartpark/qwen3.5",
+			family:    "stewartpark/qwen3.5",
+			want:      "Qwen 3.5 model with always-on thinking",
+		},
+		{
+			name:      "reference-only summary suppressed",
+			summary:   "sparksammy/qwen3.5-27b-unsloth",
+			reference: "sparksammy/qwen3.5-27b-unsloth",
+			family:    "sparksammy/qwen3.5-27b-unsloth",
+			want:      "",
+		},
+		{
+			name:      "family-only summary suppressed",
+			summary:   "qwen3.5",
+			reference: "qwen3.5:latest",
+			family:    "qwen3.5",
+			want:      "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeSummary(tc.summary, tc.reference, tc.family); got != tc.want {
+				t.Fatalf("normalizeSummary(%q, %q, %q) = %q, want %q", tc.summary, tc.reference, tc.family, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFetchTagsFallsBackToModelPage(t *testing.T) {
 	previousClient := httpClient
 	defer func() { httpClient = previousClient }()
